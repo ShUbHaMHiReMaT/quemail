@@ -22,8 +22,8 @@ def aes_gcm_decrypt(key, nonce, ciphertext, tag):
 # ---------- Config ----------
 IMAP_HOST = os.environ.get("QUMAIL_IMAP_HOST", "imap.gmail.com")
 IMAP_PORT = int(os.environ.get("QUMAIL_IMAP_PORT", 993))
-RECIPIENT_EMAIL = os.environ.get("QUMAIL_RECIPIENT_EMAIL", "shreyaskatti007@gmail.com")
-RECIPIENT_APP_PW = os.environ.get("QUMAIL_RECIPIENT_APP_PASSWORD", "dkwdvqlzycngginrr")
+RECIPIENT_EMAIL = os.environ.get("QUMAIL_RECIPIENT_EMAIL", "udaymathapati07@gmail.com")
+RECIPIENT_APP_PW = os.environ.get("QUMAIL_RECIPIENT_APP_PASSWORD", "bxbibwynqgpiljjw")
 CHECK_INTERVAL = int(os.environ.get("QUMAIL_CHECK_INTERVAL", 6))
 
 if not (RECIPIENT_EMAIL and RECIPIENT_APP_PW):

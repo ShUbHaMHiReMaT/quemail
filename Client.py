@@ -28,7 +28,7 @@ SENDER_EMAIL = os.environ.get("QUMAIL_SENDER_EMAIL", "shubhamhiremath87@gmail.co
 SENDER_APP_PW = os.environ.get("QUMAIL_SENDER_APP_PASSWORD", "hagusyzrlycazzcy")
 SMTP_HOST = os.environ.get("QUMAIL_SMTP_HOST", "smtp.gmail.com")
 SMTP_PORT = int(os.environ.get("QUMAIL_SMTP_PORT", 587))
-RECIPIENT_EMAIL = os.environ.get("QUMAIL_RECIPIENT_EMAIL", "shreyaskatti007@gmail.com")
+RECIPIENT_EMAIL = os.environ.get("QUMAIL_RECIPIENT_EMAIL", "udaymathapati07@gmail.com")
 
 if not (SENDER_EMAIL and SENDER_APP_PW and RECIPIENT_EMAIL):
     print("Please set env vars: QUMAIL_SENDER_EMAIL, QUMAIL_SENDER_APP_PASSWORD, QUMAIL_RECIPIENT_EMAIL")
