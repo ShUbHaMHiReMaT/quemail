@@ -1,0 +1,6 @@
+# requirements.txt
+oqs==0.8.1
+pycryptodome
+psutil
+matplotlib
+numpy
