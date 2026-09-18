@@ -92,6 +92,20 @@ qumail receive            # run continuously
 Decrypted messages land in `QUMAIL_OUTPUT_DIR` (default `./inbox/`) as
 `<message-id>.txt` with a `.json` sidecar naming the verified sender.
 
+### Sending to yourself
+
+By default the receiver only looks at unread mail, which keeps each poll
+proportional to what has newly arrived. Gmail marks a message you send to
+your own address as read on delivery, so it will never appear unread:
+
+```bash
+qumail receive --once --include-read
+```
+
+Re-processing is prevented by the replay store rather than by the read flag,
+so widening the search is safe — it only costs bandwidth as the mailbox grows.
+Leave the flag off for a long-running daemon receiving mail from other people.
+
 ## Commands
 
 | Command | Purpose |
@@ -102,7 +116,7 @@ Decrypted messages land in `QUMAIL_OUTPUT_DIR` (default `./inbox/`) as
 | `qumail contacts [--json]` | list trusted contacts |
 | `qumail remove-contact FP` | stop trusting a key |
 | `qumail send --to ADDR` | encrypt, sign and send |
-| `qumail receive [--once] [--html]` | poll, verify, decrypt |
+| `qumail receive [--once] [--html] [--include-read]` | poll, verify, decrypt |
 | `qumail doctor` | check config, keystore and contacts |
 
 ## Configuration

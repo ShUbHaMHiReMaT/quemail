@@ -140,11 +140,23 @@ class ImapReceiver:
             raise TransportError("IMAP session is not connected")
         return self._client
 
-    def search_unseen(self, limit: int) -> List[bytes]:
-        """UIDs of unread QuMail messages, oldest first."""
+    def search_unseen(self, limit: int, *, include_read: bool = False) -> List[bytes]:
+        """UIDs of QuMail messages to consider, oldest first.
+
+        Unread-only by default, which keeps each poll proportional to what has
+        newly arrived. `include_read` drops that filter, for mailboxes where
+        the flag is unreliable -- Gmail marks a message you sent to yourself as
+        read on delivery, and any other mail client touching the mailbox can
+        set the flag too. Double-processing is prevented by the replay store,
+        not by the flag, so widening the search is safe; it only costs
+        bandwidth as the mailbox grows.
+        """
         client = self._require_client()
+        criteria = ("SUBJECT", SEARCH_SUBJECT)
+        if not include_read:
+            criteria = ("UNSEEN",) + criteria
         try:
-            status, data = client.uid("SEARCH", None, "UNSEEN", "SUBJECT", SEARCH_SUBJECT)
+            status, data = client.uid("SEARCH", None, *criteria)
         except imaplib.IMAP4.error as exc:
             raise TransportError("IMAP search failed: %s" % exc) from exc
         if status != "OK" or not data or not data[0]:
@@ -198,8 +210,10 @@ class ImapReceiver:
             # Not fatal: the replay guard prevents double-processing anyway.
             log.warning("could not flag UID %s as seen: %s", uid, exc)
 
-    def iter_pending(self, limit: int) -> Iterator[FetchedMessage]:
-        for uid in self.search_unseen(limit):
+    def iter_pending(
+        self, limit: int, *, include_read: bool = False
+    ) -> Iterator[FetchedMessage]:
+        for uid in self.search_unseen(limit, include_read=include_read):
             fetched = self.fetch(uid)
             if fetched is not None:
                 yield fetched

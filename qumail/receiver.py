@@ -55,11 +55,13 @@ class Receiver:
         contacts: ContactStore,
         *,
         write_html: bool = False,
+        include_read: bool = False,
     ) -> None:
         self.config = config
         self.identity = identity
         self.contacts = contacts
         self.write_html = write_html
+        self.include_read = include_read
         self.replay = ReplayGuard(
             config.state_dir / "replay.json",
             max_age=config.policy.max_message_age,
@@ -165,7 +167,8 @@ class Receiver:
             self.config.imap, max_message_bytes=self.config.policy.max_message_bytes
         ) as session:
             for message in session.iter_pending(
-                self.config.policy.max_messages_per_poll
+                self.config.policy.max_messages_per_poll,
+                include_read=self.include_read,
             ):
                 if self._stopping:
                     break

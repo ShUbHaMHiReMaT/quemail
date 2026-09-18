@@ -94,6 +94,13 @@ unread, so importing the contact later makes it readable on the next poll.
 Permanently invalid messages are flagged read so they are not re-downloaded
 forever.
 
+The read flag is an efficiency filter, never a security control: what stops a
+message being processed twice is the replay store, which is why
+`receive --include-read` can widen the search without weakening anything. The
+flag cannot be trusted in either direction — any mail client sharing the
+mailbox can set or clear it, and Gmail sets it automatically on mail you send
+to yourself.
+
 ## Input validation
 
 Everything on the wire is attacker-controlled and treated as such.

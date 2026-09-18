@@ -178,7 +178,11 @@ def cmd_send(args: argparse.Namespace, config: Config) -> int:
 def cmd_receive(args: argparse.Namespace, config: Config) -> int:
     identity = _unlock(config)
     receiver = Receiver(
-        config, identity, ContactStore(config.contacts_path), write_html=args.html
+        config,
+        identity,
+        ContactStore(config.contacts_path),
+        write_html=args.html,
+        include_read=args.include_read,
     )
 
     if args.once:
@@ -302,6 +306,12 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("receive", help="poll for and decrypt incoming messages")
     p.add_argument("--once", action="store_true", help="one poll, then exit")
     p.add_argument("--html", action="store_true", help="also write an HTML view")
+    p.add_argument(
+        "--include-read",
+        action="store_true",
+        help="also consider messages already flagged read (needed when sending "
+             "to yourself: Gmail marks your own mail read on delivery)",
+    )
     p.set_defaults(handler=cmd_receive, needs=("imap",))
 
     p = sub.add_parser("doctor", help="check configuration and keys")

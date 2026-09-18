@@ -25,7 +25,10 @@ _REDACTIONS = (
         r"[\"']?\s*[:=]\s*(\"[^\"]*\"|'[^']*'|\S+)"
     ),
     # Long hex runs: raw keys, shared secrets, private key material.
-    re.compile(r"[0-9a-fA-F]{32,}"),
+    # Threshold is 40 rather than 32 so that public identifiers stay legible:
+    # message ids and fingerprints are 32 hex chars and are safe to log, while
+    # real key material (a 32-byte key is 64 hex chars) is still scrubbed.
+    re.compile(r"[0-9a-fA-F]{40,}"),
     # Base64-ish runs long enough to be key material rather than an ID.
     re.compile(r"\b[A-Za-z0-9+/]{60,}={0,2}\b"),
 )

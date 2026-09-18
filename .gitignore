@@ -5,6 +5,8 @@
 keystore.json
 *.keystore
 contacts.json
+# Exported public identities: not secret, but personal to whoever ran export.
+*.qumail-id.json
 *.pem
 *.key
 *.bin
