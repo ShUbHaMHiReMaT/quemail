@@ -1,6 +1,3 @@
-# requirements.txt
-oqs==0.8.1
-pycryptodome
-psutil
-matplotlib
-numpy
+# Runtime dependencies. Pinned to the versions this release was tested against.
+cryptography==50.0.1   # X25519, Ed25519, AES-GCM, HKDF, scrypt, constant-time compare
+kyber-py==1.2.0        # ML-KEM-768 (FIPS 203)

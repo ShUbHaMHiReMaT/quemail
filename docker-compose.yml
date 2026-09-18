@@ -1,0 +1,43 @@
+# QuMail receiver.
+#
+#   1. Create the keystore on the host first:  qumail keygen --address you@...
+#   2. Copy .env.example to .env and fill it in (chmod 600 .env).
+#   3. docker compose up -d
+#
+# .env is read by Compose and injected as environment variables; it is never
+# copied into the image.
+
+services:
+  receiver:
+    build: .
+    image: qumail:1.0.0
+    container_name: qumail-receiver
+    restart: unless-stopped
+    env_file: .env
+    command: ["receive"]
+
+    volumes:
+      # Keystore, contacts, replay state and decrypted output.
+      - qumail-data:/var/lib/qumail
+
+    # --- hardening ---
+    read_only: true                 # the image itself is immutable at runtime
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop: ["ALL"]               # no capabilities are needed to poll IMAP
+    security_opt:
+      - no-new-privileges:true
+    user: "qumail"
+
+    # Bound the blast radius of a runaway process.
+    mem_limit: 512m
+    pids_limit: 128
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  qumail-data:

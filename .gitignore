@@ -1,0 +1,43 @@
+# --- Secrets & key material: never commit ---
+.env
+*.env
+!.env.example
+keystore.json
+*.keystore
+contacts.json
+*.pem
+*.key
+*.bin
+secrets/
+
+# --- Runtime state & decrypted output ---
+inbox/
+state/
+*.decrypted
+decrypted_*.html
+decrypted_*.txt
+performance_results.json
+performance_comparison.png
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# --- Environments ---
+venv/
+.venv/
+env/
+
+# --- Editors / OS ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

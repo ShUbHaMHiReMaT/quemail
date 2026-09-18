@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qumail"
+version = "1.0.0"
+description = "Post-quantum hybrid end-to-end encrypted email over ordinary SMTP/IMAP"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "cryptography>=42,<51",
+    "kyber-py>=1.2,<2",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "matplotlib>=3.7"]
+
+[project.scripts]
+qumail = "qumail.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["qumail*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

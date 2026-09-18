@@ -1,0 +1,69 @@
+# systemd unit for the QuMail receiver.
+#
+# Install:
+#   sudo useradd --system --home-dir /var/lib/qumail --shell /usr/sbin/nologin qumail
+#   sudo install -d -o qumail -g qumail -m 700 /var/lib/qumail
+#   sudo install -o qumail -g qumail -m 600 .env /etc/qumail.env
+#   sudo cp deploy/qumail-receiver.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now qumail-receiver
+#
+# The keystore passphrase lives in /etc/qumail.env, which must be mode 600 and
+# owned by root. Everything in that file is a secret.
+
+[Unit]
+Description=QuMail encrypted mail receiver
+Documentation=https://github.com/ShUbHaMHiReMaT/quemail
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=qumail
+Group=qumail
+
+EnvironmentFile=/etc/qumail.env
+Environment=QUMAIL_HOME=/var/lib/qumail
+Environment=QUMAIL_LOG_FORMAT=json
+
+ExecStart=/usr/local/bin/qumail receive
+Restart=on-failure
+RestartSec=10s
+
+# Stop politely: the receiver finishes the message in flight, then exits.
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+# --- sandboxing ---
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+
+# The only writable path, and the only network families needed.
+StateDirectory=qumail
+StateDirectoryMode=0700
+ReadWritePaths=/var/lib/qumail
+RestrictAddressFamilies=AF_INET AF_INET6
+
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+SystemCallArchitectures=native
+
+# Resource ceilings.
+MemoryMax=512M
+TasksMax=128
+
+[Install]
+WantedBy=multi-user.target
