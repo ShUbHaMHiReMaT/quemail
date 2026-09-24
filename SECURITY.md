@@ -9,7 +9,7 @@
 | The mail provider | Reads and edits every stored message | Sees only ciphertext; any edit breaks the AEAD tag |
 | A network attacker | Intercepts and rewrites traffic | TLS with certificate and hostname verification, no plaintext fallback |
 | A future quantum adversary | Records traffic now, breaks it later | ML-KEM-768 protects the key alongside X25519 |
-| An impersonator | Sends mail claiming to be a contact | Ed25519 signature checked against an explicitly imported key |
+| An impersonator | Sends mail claiming to be a known contact | Ed25519 signature checked against the key already pinned to that fingerprint |
 | A replay attacker | Re-sends a genuine captured message | Freshness window plus persistent seen-id store |
 | A local user on the same host | Reads files on disk | Keystore encrypted with scrypt; keys and output are mode 600 |
 
@@ -22,9 +22,12 @@
 - **Compromise of the long-term keystore.** An attacker with the keystore and
   the passphrase can read recorded past traffic. Per-message ephemeral keys do
   not help once the static decapsulation key is known.
-- **A wrong key imported at step one.** If you import an attacker's bundle
-  without verifying the fingerprint out of band, you have authenticated the
-  attacker. This is why `--expect-fingerprint` exists.
+- **A wrong key accepted at first contact.** Keys are adopted on first use
+  (see below), so an attacker who can intercept mail at that exact moment can
+  substitute their own. Verify the fingerprint out of band, or run with
+  `--no-learn` and import keys yourself.
+
+- **Whoever hosts the service, if you host it.** See *Hosted deployments*.
 
 ## Cryptographic construction
 
@@ -72,6 +75,66 @@ error would be a decryption oracle. ML-KEM's implicit rejection is relied on
 as designed: a malformed ciphertext yields an unpredictable key rather than an
 error, and the failure surfaces at the AEAD.
 
+## Trust on first use
+
+The sender's public key bundle travels inside every envelope. A receiver that
+does not yet know that fingerprint adopts the attached key and stores it.
+
+This is safe to do without weakening the cryptography, because the bundle is
+not trusted on its own merits: the envelope header carries the sender's
+fingerprint, which is a SHA-256 commitment over the whole bundle (address and
+all three public keys), and that fingerprint is both signed and bound into the
+KEM derivation. A bundle that has been swapped or edited therefore fails to
+match before any of its keys is used. What is taken on faith is *whose* key it
+is -- never whether the key is intact.
+
+The resulting properties:
+
+| | Guarantee |
+|---|---|
+| First message from a new fingerprint | Taken on faith. An active attacker present at that moment can substitute a key. |
+| Every later message | Verified against the stored key. Nothing arriving by email can displace a key already held. |
+| A stored key vs. an attached one | The stored key always wins, so an imported and verified contact can never be downgraded. |
+| Detection | The fingerprint changes, so a substitution appears as a *new* contact rather than a silent swap. |
+
+`qumail receive --no-learn` disables adoption entirely: senders must have been
+imported in advance, which restores verify-before-first-message at the cost of
+the manual exchange.
+
+## Hosted deployments
+
+Running the web inbox on a server, such as Render, moves the decryption
+boundary. That host needs the keystore and its passphrase, so:
+
+- Messages remain encrypted against the mail provider, the network, and every
+  third party. The post-quantum guarantees against *harvest now, decrypt
+  later* are unchanged, because what is archived at the provider is still
+  ciphertext.
+- Messages are **not** encrypted against the host. Whoever controls that
+  machine, or compromises it, can read plaintext and sign messages as you.
+
+This is the same trade every webmail client makes, and it is a legitimate one
+-- but it should be a decision, not a surprise. For a threat model where
+nobody but you may read the plaintext, run `qumail web` bound to 127.0.0.1 on
+your own machine.
+
+When hosting anyway:
+
+- The web inbox refuses to start without `QUMAIL_WEB_PASSWORD_HASH`; the
+  password is stored only as an scrypt hash.
+- Sessions are HMAC-signed tokens in a cookie marked HttpOnly, SameSite=Strict
+  and Secure. Forms carry a CSRF token derived from the session.
+- The Content-Security-Policy is `default-src 'none'` with script and style
+  from `'self'` only -- no inline script, no third-party origins, no framing.
+- Five failed logins lock a client out for five minutes.
+- Responses carry `Cache-Control: no-store`: decrypted mail must not sit in a
+  proxy or browser cache.
+- Routing is an explicit table with no static directory, so no filesystem path
+  is ever derived from a URL.
+- Give the service a persistent disk. Without one, the learned contact keys
+  and the replay store are wiped on every restart, which silently disables
+  both key pinning and replay protection.
+
 ## Receive pipeline
 
 Every inbound message passes all seven checks, in this order:
@@ -79,7 +142,8 @@ Every inbound message passes all seven checks, in this order:
 1. body contains exactly one armoured block (two would be ambiguous)
 2. envelope parses within size limits and the version matches
 3. it is addressed to this keystore's fingerprint
-4. the sender's fingerprint is in the contact store
+4. the sender's fingerprint is in the contact store, or the bundle attached to
+   the message matches that fingerprint and is adopted on first contact
 5. the Ed25519 signature verifies under that contact's key
 6. the KEM and AEAD verify
 7. the timestamp is fresh and the message id has not been seen

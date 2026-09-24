@@ -105,6 +105,38 @@ class ContactStore:
         self._save()
         return True
 
+    def learn(self, identity: PublicIdentity) -> bool:
+        """Trust-on-first-use: accept a key seen for the first time.
+
+        Returns True if this was a new identity. The security properties are
+        the ones Signal and WhatsApp rely on:
+
+        * First contact is taken on faith. An attacker positioned between you
+          at that exact moment could substitute their own key.
+        * Every contact after that is pinned. The key is stored under a
+          fingerprint that commits to it, so a later substitution is a
+          *different* fingerprint and lands here as a new identity, while an
+          attempt to change the key behind an existing fingerprint is
+          impossible by construction.
+        * The fingerprint is shown in the UI, so the faith taken at step one
+          can be checked out of band at any later time.
+
+        This is weaker than verifying before the first message and stronger
+        than accepting anything. Which one you get is the operator's choice.
+        """
+        existing = self._contacts.get(identity.fingerprint)
+        if existing is not None:
+            return False
+
+        log.info(
+            "learned new identity %s for %s on first contact",
+            identity.fingerprint,
+            identity.address,
+        )
+        self._contacts[identity.fingerprint] = identity
+        self._save()
+        return True
+
     def remove(self, fingerprint: str) -> bool:
         if self._contacts.pop(fingerprint.replace(" ", "").lower(), None) is None:
             return False

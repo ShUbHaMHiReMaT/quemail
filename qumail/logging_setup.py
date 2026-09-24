@@ -44,6 +44,20 @@ def redact(text: str) -> str:
     return out
 
 
+def _scrub(value: Any) -> Any:
+    """Redact an interpolation argument without changing its type.
+
+    Numbers are returned untouched. Coercing them to strings would scrub
+    nothing -- a credential is never an int -- and would break every "%d" in
+    the codebase with "a number is required, not str".
+    """
+    if isinstance(value, str):
+        return redact(value)
+    if isinstance(value, (bool, int, float)) or value is None:
+        return value
+    return redact(str(value))
+
+
 class RedactingFilter(logging.Filter):
     """Scrubs every record on its way to a handler."""
 
@@ -52,9 +66,9 @@ class RedactingFilter(logging.Filter):
             record.msg = redact(str(record.msg))
             if record.args:
                 if isinstance(record.args, dict):
-                    record.args = {k: redact(str(v)) for k, v in record.args.items()}
+                    record.args = {k: _scrub(v) for k, v in record.args.items()}
                 else:
-                    record.args = tuple(redact(str(a)) for a in record.args)
+                    record.args = tuple(_scrub(a) for a in record.args)
         except Exception:  # never let logging break the caller
             pass
         return True

@@ -9,7 +9,7 @@ import pytest
 
 from qumail.armor import armor, dearmor
 from qumail.contacts import ContactStore
-from qumail.crypto.envelope import seal
+from qumail.crypto.envelope import Envelope, seal
 from qumail.errors import CryptoError, EnvelopeError, QuMailError, ReplayError, TrustError
 from qumail.receiver import Receiver
 from qumail.transport.smtp import build_message
@@ -23,10 +23,18 @@ def mail_body(envelope, sender="alice@example.com", recipient="bob@example.com")
 
 @pytest.fixture
 def receiver(config, bob, alice):
-    """Bob's receiver, with Alice already trusted."""
+    """Bob's receiver, with Alice already trusted. Learns new senders (default)."""
     contacts = ContactStore(config.contacts_path)
     contacts.add(alice.public)
     return Receiver(config, bob, contacts)
+
+
+@pytest.fixture
+def strict_receiver(config, bob, alice):
+    """Bob's receiver with first-contact learning turned off."""
+    contacts = ContactStore(config.contacts_path)
+    contacts.add(alice.public)
+    return Receiver(config, bob, contacts, learn_senders=False)
 
 
 class TestHappyPath:
@@ -56,11 +64,59 @@ class TestHappyPath:
         assert receiver.process_body(noisy).body_path.read_bytes() == b"hi"
 
 
-class TestRejections:
-    def test_untrusted_sender_is_deferred(self, receiver, mallory, bob):
+class TestFirstContact:
+    """Trust on first use: the key rides with the message."""
+
+    def test_unknown_sender_is_learned_and_delivered(self, receiver, mallory, bob, config):
+        envelope = seal(mallory, bob.public, b"hello, we have not met")
+        result = receiver.process_body(mail_body(envelope))
+
+        assert result.body_path.read_bytes() == b"hello, we have not met"
+        assert ContactStore(config.contacts_path).get(mallory.fingerprint) is not None
+
+    def test_learning_happens_once(self, receiver, mallory, bob, config):
+        receiver.process_body(mail_body(seal(mallory, bob.public, b"first")))
+        receiver.process_body(mail_body(seal(mallory, bob.public, b"second")))
+        assert len(ContactStore(config.contacts_path)) == 2  # alice + mallory
+
+    def test_a_stored_key_is_never_displaced_by_an_attached_one(
+        self, receiver, alice, bob, config
+    ):
+        """An imported, verified key wins over anything arriving by email."""
+        envelope = seal(alice, bob.public, b"hi")
+        receiver.process_body(mail_body(envelope))
+
+        stored = ContactStore(config.contacts_path).get(alice.fingerprint)
+        assert stored.signing_key == alice.public.signing_key
+
+    def test_a_forged_attached_identity_is_rejected(self, alice, bob, mallory):
+        """The bundle must hash to the fingerprint the header commits to."""
+        envelope = seal(alice, bob.public, b"hi")
+        data = json.loads(envelope.to_json())
+        # Mallory swaps in her own bundle while leaving Alice's fingerprint.
+        data["sender_id"] = mallory.public.to_dict()
+
+        with pytest.raises(EnvelopeError, match="does not match the fingerprint"):
+            Envelope.from_json(json.dumps(data))
+
+    def test_strict_mode_refuses_to_learn(self, strict_receiver, mallory, bob):
         envelope = seal(mallory, bob.public, b"trust me")
         with pytest.raises(TrustError, match="not a trusted contact"):
+            strict_receiver.process_body(mail_body(envelope))
+
+    def test_sender_without_an_attached_key_is_still_refused(
+        self, receiver, mallory, bob
+    ):
+        envelope = seal(mallory, bob.public, b"anonymous", attach_identity=False)
+        with pytest.raises(TrustError, match="attached no public identity"):
             receiver.process_body(mail_body(envelope))
+
+
+class TestRejections:
+    def test_untrusted_sender_is_deferred(self, strict_receiver, mallory, bob):
+        envelope = seal(mallory, bob.public, b"trust me")
+        with pytest.raises(TrustError, match="not a trusted contact"):
+            strict_receiver.process_body(mail_body(envelope))
 
     def test_message_for_another_recipient_is_refused(self, receiver, alice, mallory):
         envelope = seal(alice, mallory.public, b"not for bob")
@@ -95,27 +151,35 @@ class TestRejections:
         with pytest.raises(EnvelopeError, match="no QuMail armoured block"):
             receiver.process_body("Hi Bob, lunch at 1?")
 
-    def test_nothing_is_written_when_a_message_is_rejected(self, receiver, mallory, bob, config):
+    def test_nothing_is_written_when_a_message_is_rejected(
+        self, strict_receiver, mallory, bob, config
+    ):
         envelope = seal(mallory, bob.public, b"trust me")
         with pytest.raises(TrustError):
-            receiver.process_body(mail_body(envelope))
+            strict_receiver.process_body(mail_body(envelope))
 
         written = list(config.output_dir.glob("*")) if config.output_dir.exists() else []
         assert written == []
 
-    def test_a_rejected_message_does_not_consume_its_id(self, receiver, alice, bob, mallory):
+    def test_a_rejected_message_does_not_consume_its_id(
+        self, strict_receiver, alice, bob, mallory
+    ):
         """A dropped message must not let an attacker block a later real one."""
         envelope = seal(mallory, bob.public, b"junk")
         with pytest.raises(TrustError):
-            receiver.process_body(mail_body(envelope))
+            strict_receiver.process_body(mail_body(envelope))
 
         # The same id, this time from a trusted sender, still goes through.
         legit = seal(alice, bob.public, b"real")
-        assert receiver.process_body(mail_body(legit)).body_path.read_bytes() == b"real"
+        assert strict_receiver.process_body(
+            mail_body(legit)
+        ).body_path.read_bytes() == b"real"
 
 
 class TestPollLoopIsolation:
-    def test_one_bad_message_does_not_stop_the_batch(self, receiver, alice, bob, mallory):
+    def test_one_bad_message_does_not_stop_the_batch(
+        self, strict_receiver, alice, bob, mallory
+    ):
         """The loop must survive a hostile message and keep delivering."""
         from qumail.receiver import PollResult
         from qumail.transport.imap import FetchedMessage
@@ -133,7 +197,7 @@ class TestPollLoopIsolation:
             fetched(seal(mallory, bob.public, b"junk"), b"1"),
             fetched(seal(alice, bob.public, b"good one"), b"2"),
         ]
-        outcomes = [receiver._process_fetched(m, result) for m in messages]
+        outcomes = [strict_receiver._process_fetched(m, result) for m in messages]
 
         assert result.delivered == 1
         assert result.rejected == 1

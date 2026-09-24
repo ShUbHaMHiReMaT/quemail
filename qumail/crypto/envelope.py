@@ -27,7 +27,7 @@ import os
 import re
 import time
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Optional
 
 from .. import PROTOCOL_VERSION
 from ..errors import CryptoError, EnvelopeError
@@ -135,16 +135,25 @@ def _validate_fingerprint(value: Any) -> str:
 
 @dataclass(frozen=True)
 class Envelope:
-    """A complete sealed message."""
+    """A complete sealed message.
+
+    `sender_identity` is the sender's public key bundle travelling with the
+    message so the recipient never has to be handed a key file by hand. It
+    needs no separate protection: the header carries the sender's fingerprint,
+    which is a SHA-256 commitment over the whole bundle, and that fingerprint
+    is signed *and* bound into the KEM derivation. A swapped or edited bundle
+    therefore fails the fingerprint check before its key is ever used.
+    """
 
     header: EnvelopeHeader
     kem_ciphertext: KemCiphertext
     nonce: bytes
     ciphertext: bytes
     signature: bytes
+    sender_identity: Optional["PublicIdentity"] = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        data: dict[str, Any] = {
             "hdr": self.header.to_dict(),
             "kem": {
                 "x25519": b64e(self.kem_ciphertext.x25519_ephemeral),
@@ -154,6 +163,9 @@ class Envelope:
             "ct": b64e(self.ciphertext),
             "sig": b64e(self.signature),
         }
+        if self.sender_identity is not None:
+            data["sender_id"] = self.sender_identity.to_dict()
+        return data
 
     def to_json(self) -> str:
         return json.dumps(self.to_dict(), sort_keys=True, separators=(",", ":"))
@@ -179,8 +191,21 @@ class Envelope:
         if len(ciphertext) > MAX_PLAINTEXT_BYTES + TAG_SIZE:
             raise EnvelopeError("envelope ciphertext exceeds the maximum accepted size")
 
+        header = EnvelopeHeader.from_dict(data.get("hdr"))
+
+        # An attached identity must be the one the header names. Checked here,
+        # before anything downstream can be tempted to use its keys.
+        sender_identity = None
+        if "sender_id" in data:
+            sender_identity = PublicIdentity.from_dict(data["sender_id"])
+            if sender_identity.fingerprint != header.sender_fingerprint:
+                raise EnvelopeError(
+                    "attached sender identity does not match the fingerprint in "
+                    "the envelope header"
+                )
+
         return Envelope(
-            header=EnvelopeHeader.from_dict(data.get("hdr")),
+            header=header,
             kem_ciphertext=KemCiphertext(
                 x25519_ephemeral=b64d(kem.get("x25519", ""), expect=X25519_PUBLIC_SIZE),
                 mlkem=b64d(kem.get("mlkem", ""), expect=MLKEM_CIPHERTEXT_SIZE),
@@ -188,6 +213,7 @@ class Envelope:
             nonce=b64d(data.get("nonce", ""), expect=NONCE_SIZE),
             ciphertext=ciphertext,
             signature=b64d(data.get("sig", ""), expect=SIGNATURE_SIZE),
+            sender_identity=sender_identity,
         )
 
 
@@ -218,8 +244,13 @@ def seal(
     *,
     subject: str = "",
     timestamp: int | None = None,
+    attach_identity: bool = True,
 ) -> Envelope:
-    """Encrypt and sign `plaintext` from `sender` to `recipient`."""
+    """Encrypt and sign `plaintext` from `sender` to `recipient`.
+
+    `attach_identity` ships the sender's public key bundle with the message so
+    the recipient can learn it on first contact instead of being handed a file.
+    """
     if len(plaintext) > MAX_PLAINTEXT_BYTES:
         raise EnvelopeError(
             "message body exceeds the %d byte limit" % MAX_PLAINTEXT_BYTES
@@ -246,6 +277,7 @@ def seal(
         nonce=nonce,
         ciphertext=ciphertext,
         signature=signature,
+        sender_identity=sender.public if attach_identity else None,
     )
 
 

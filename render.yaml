@@ -1,0 +1,80 @@
+# Render blueprint for the QuMail web inbox.
+#
+# Deploy:
+#   1. Push this repo to GitHub.
+#   2. Render dashboard -> New -> Blueprint -> pick the repo.
+#   3. Fill in the environment variables marked sync:false (Render will prompt).
+#   4. Deploy.
+#
+# The disk matters. Without it the container filesystem is wiped on every
+# restart, taking the learned contact keys and the replay state with it --
+# the two things that make trust-on-first-use and replay protection stick.
+
+services:
+  - type: web
+    name: qumail
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter          # a disk requires a paid instance type
+    healthCheckPath: /healthz
+
+    disk:
+      name: qumail-data
+      mountPath: /var/lib/qumail
+      sizeGB: 1
+
+    envVars:
+      # ---- identity ----
+      # The keystore, base64-encoded. Generate locally with:
+      #   qumail keygen --address you@example.com
+      #   base64 -w0 ~/.qumail/keystore.json
+      # Written to the disk on first boot, then read from there.
+      - key: QUMAIL_KEYSTORE_B64
+        sync: false
+      - key: QUMAIL_KEYSTORE_PASSPHRASE
+        sync: false
+
+      # ---- web inbox login ----
+      # Generate both with: qumail set-web-password
+      - key: QUMAIL_WEB_PASSWORD_HASH
+        sync: false
+      - key: QUMAIL_WEB_SESSION_SECRET
+        sync: false
+
+      # ---- mail account ----
+      - key: QUMAIL_SMTP_HOST
+        value: smtp.gmail.com
+      - key: QUMAIL_SMTP_PORT
+        value: "587"
+      - key: QUMAIL_SMTP_SECURITY
+        value: starttls
+      - key: QUMAIL_SMTP_USERNAME
+        sync: false
+      - key: QUMAIL_SMTP_PASSWORD
+        sync: false
+      - key: QUMAIL_FROM_ADDRESS
+        sync: false
+
+      - key: QUMAIL_IMAP_HOST
+        value: imap.gmail.com
+      - key: QUMAIL_IMAP_PORT
+        value: "993"
+      - key: QUMAIL_IMAP_USERNAME
+        sync: false
+      - key: QUMAIL_IMAP_PASSWORD
+        sync: false
+
+      # ---- runtime ----
+      # Bind to every interface: Render routes to the container, not to
+      # localhost. Render terminates HTTPS in front, so Secure cookies are
+      # correct here.
+      - key: QUMAIL_WEB_HOST
+        value: 0.0.0.0
+      - key: QUMAIL_WEB_SECURE_COOKIES
+        value: "true"
+      - key: QUMAIL_HOME
+        value: /var/lib/qumail
+      - key: QUMAIL_LOG_FORMAT
+        value: json
+      - key: QUMAIL_POLL_INTERVAL
+        value: "30"

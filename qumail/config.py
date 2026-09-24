@@ -8,6 +8,7 @@ than silently defaulting to something less safe.
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 from dataclasses import dataclass, field
@@ -126,6 +127,17 @@ class ImapConfig:
 
 
 @dataclass(frozen=True)
+class WebConfig:
+    """Settings for the web inbox."""
+
+    host: str
+    port: int
+    password_hash: str
+    session_secret: Optional[bytes]
+    secure_cookies: bool
+
+
+@dataclass(frozen=True)
 class Policy:
     """Receiver-side rules. The defaults are the strict ones."""
 
@@ -181,6 +193,49 @@ def load_smtp() -> SmtpConfig:
     )
 
 
+def load_web() -> WebConfig:
+    """Web inbox settings. Refuses to start without a password."""
+    password_hash = _get("QUMAIL_WEB_PASSWORD_HASH")
+    if not password_hash:
+        raise ConfigError(
+            "QUMAIL_WEB_PASSWORD_HASH is not set. The web inbox shows decrypted "
+            "mail and will not run without a password. Generate one with: "
+            "qumail set-web-password"
+        )
+    if not password_hash.startswith("scrypt$"):
+        raise ConfigError(
+            "QUMAIL_WEB_PASSWORD_HASH is not a QuMail password hash. Store the "
+            "output of 'qumail set-web-password', not the password itself."
+        )
+
+    secret_hex = _get("QUMAIL_WEB_SESSION_SECRET")
+    session_secret = None
+    if secret_hex:
+        try:
+            session_secret = bytes.fromhex(secret_hex)
+        except ValueError:
+            raise ConfigError(
+                "QUMAIL_WEB_SESSION_SECRET must be hex (see 'qumail set-web-password')"
+            ) from None
+        if len(session_secret) < 32:
+            raise ConfigError("QUMAIL_WEB_SESSION_SECRET must be at least 32 bytes")
+
+    # Render and most PaaS hosts publish $PORT and terminate TLS for us.
+    port = _get_int("PORT", _get_int("QUMAIL_WEB_PORT", 8000, minimum=1, maximum=65535),
+                    minimum=1, maximum=65535)
+    host = _get("QUMAIL_WEB_HOST", "127.0.0.1") or "127.0.0.1"
+
+    return WebConfig(
+        host=host,
+        port=port,
+        password_hash=password_hash,
+        session_secret=session_secret,
+        # Only meaningful over HTTPS; on a plain-HTTP localhost run the browser
+        # would drop a Secure cookie and login would silently never stick.
+        secure_cookies=_get_bool("QUMAIL_WEB_SECURE_COOKIES", host != "127.0.0.1"),
+    )
+
+
 def load_imap() -> ImapConfig:
     mailbox = _get("QUMAIL_IMAP_MAILBOX", "INBOX") or "INBOX"
     # The mailbox name is interpolated into an IMAP command; keep it boring.
@@ -232,6 +287,50 @@ def load_config(*, dotenv: Optional[Path] = None, with_smtp: bool = False,
         log_level=(_get("QUMAIL_LOG_LEVEL", "INFO") or "INFO").upper(),
         log_format=(_get("QUMAIL_LOG_FORMAT", "text") or "text").lower(),
     )
+
+
+def bootstrap_keystore(config: "Config") -> bool:
+    """Materialise the keystore from QUMAIL_KEYSTORE_B64 if it is not on disk.
+
+    Platforms like Render start with an empty volume, and a keystore cannot be
+    generated on boot -- it would be a new identity nobody has ever verified,
+    and the old one's mail would be unreadable. So the operator base64s their
+    existing keystore into an environment variable and it is written out once.
+
+    The keystore is encrypted with the operator's passphrase, so the env var is
+    not plaintext key material. It is still sensitive: an attacker holding both
+    it and the passphrase has the identity.
+
+    Returns True if a keystore was written.
+    """
+    import base64
+
+    encoded = _get("QUMAIL_KEYSTORE_B64")
+    if not encoded or config.keystore_path.exists():
+        return False
+
+    try:
+        raw = base64.b64decode(encoded, validate=True)
+    except (ValueError, TypeError) as exc:
+        raise ConfigError("QUMAIL_KEYSTORE_B64 is not valid base64") from exc
+
+    try:
+        parsed = json.loads(raw)
+        if not isinstance(parsed, dict) or "ct" not in parsed:
+            raise ValueError
+    except ValueError as exc:
+        raise ConfigError(
+            "QUMAIL_KEYSTORE_B64 does not decode to a QuMail keystore"
+        ) from exc
+
+    from .fsutil import atomic_write_bytes
+
+    atomic_write_bytes(config.keystore_path, raw, private=True)
+    print(
+        "Restored keystore from QUMAIL_KEYSTORE_B64 to %s" % config.keystore_path,
+        file=sys.stderr,
+    )
+    return True
 
 
 def get_passphrase(*, confirm: bool = False) -> str:

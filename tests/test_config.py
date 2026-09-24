@@ -115,3 +115,26 @@ class TestRedaction:
     def test_ordinary_messages_are_left_alone(self):
         message = "polling imap.gmail.com every 30s as bob@example.com"
         assert redact(message) == message
+
+    def test_numeric_arguments_survive_the_filter(self, caplog):
+        """The filter must not stringify args: "%d" would then raise."""
+        import logging
+
+        from qumail.logging_setup import RedactingFilter
+
+        record = logging.LogRecord(
+            "t", logging.INFO, __file__, 1, "listening on %s:%d", ("localhost", 8000), None
+        )
+        assert RedactingFilter().filter(record)
+        assert record.getMessage() == "listening on localhost:8000"
+
+    def test_string_arguments_are_still_scrubbed(self):
+        import logging
+
+        from qumail.logging_setup import RedactingFilter
+
+        record = logging.LogRecord(
+            "t", logging.INFO, __file__, 1, "using %s", ("password=hunter2hunter2",), None
+        )
+        RedactingFilter().filter(record)
+        assert "hunter2" not in record.getMessage()

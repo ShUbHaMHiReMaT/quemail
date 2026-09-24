@@ -56,12 +56,14 @@ class Receiver:
         *,
         write_html: bool = False,
         include_read: bool = False,
+        learn_senders: bool = True,
     ) -> None:
         self.config = config
         self.identity = identity
         self.contacts = contacts
         self.write_html = write_html
         self.include_read = include_read
+        self.learn_senders = learn_senders
         self.replay = ReplayGuard(
             config.state_dir / "replay.json",
             max_age=config.policy.max_message_age,
@@ -74,21 +76,31 @@ class Receiver:
     # ---------- single message ----------
 
     def _resolve_sender(self, envelope: Envelope) -> PublicIdentity:
-        """Find the trusted identity that claims to have sent this message.
+        """Find the identity that sent this message.
 
-        There is no "accept anyway" mode. An unknown sender's signing key is
-        not in the envelope and could not be believed if it were, so a message
-        from outside the contact store is unattributable by construction and
-        stays sealed.
+        A key already in the contact store always wins: once a fingerprint is
+        known, the stored key is the one used, so nothing arriving by email can
+        displace a contact you verified.
+
+        Otherwise, if the message carries the sender's key bundle and
+        `learn_senders` is on, it is adopted on first contact. The bundle was
+        already checked against the signed fingerprint during parsing, so what
+        is taken on faith is *whose* key it is, never its integrity.
         """
         fingerprint = envelope.header.sender_fingerprint
         known = self.contacts.get(fingerprint)
         if known is not None:
             return known
+
+        attached = envelope.sender_identity
+        if attached is not None and self.learn_senders:
+            self.contacts.learn(attached)
+            return attached
+
         raise TrustError(
-            "sender %s is not a trusted contact -- import their public identity "
-            "with 'qumail import-contact' and this message will be read on the "
-            "next poll" % fingerprint
+            "sender %s is not a trusted contact and attached no public identity "
+            "-- import their key with 'qumail import-contact' and this message "
+            "will be read on the next poll" % fingerprint
         )
 
     def process_body(self, body_text: str) -> DeliveredMessage:

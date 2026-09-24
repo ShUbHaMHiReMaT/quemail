@@ -34,14 +34,20 @@ ENV QUMAIL_HOME=/var/lib/qumail \
     QUMAIL_CONTACTS=/var/lib/qumail/contacts.json \
     QUMAIL_STATE_DIR=/var/lib/qumail/state \
     QUMAIL_OUTPUT_DIR=/var/lib/qumail/inbox \
-    QUMAIL_LOG_FORMAT=json
+    QUMAIL_LOG_FORMAT=json \
+    QUMAIL_WEB_HOST=0.0.0.0 \
+    QUMAIL_WEB_PORT=8000
 
 USER qumail
 VOLUME ["/var/lib/qumail"]
+EXPOSE 8000
 
-# Fails while the keystore cannot be unlocked or the config is incomplete.
-HEALTHCHECK --interval=60s --timeout=30s --start-period=15s --retries=3 \
-    CMD ["qumail", "doctor"]
+# Render polls /healthz itself; this covers plain `docker run`.
+HEALTHCHECK --interval=60s --timeout=10s --start-period=20s --retries=3 \
+    CMD python -c "import os,urllib.request;\
+urllib.request.urlopen('http://127.0.0.1:%s/healthz' % os.environ.get('PORT','8000'),timeout=5)"
 
 ENTRYPOINT ["qumail"]
-CMD ["receive"]
+
+# The web inbox. Override with `receive` for a headless CLI-only daemon.
+CMD ["web", "--include-read"]
