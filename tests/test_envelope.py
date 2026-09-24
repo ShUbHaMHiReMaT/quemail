@@ -245,11 +245,11 @@ class TestArmor:
         assert dearmor(wrapped) == "payload"
 
     def test_missing_block(self):
-        with pytest.raises(EnvelopeError, match="no QuMail armoured block"):
+        with pytest.raises(EnvelopeError, match="no QuMail message block"):
             dearmor("just a normal email")
 
     def test_two_blocks_are_ambiguous_and_refused(self):
-        with pytest.raises(EnvelopeError, match="multiple QuMail blocks"):
+        with pytest.raises(EnvelopeError, match="multiple QuMail message blocks"):
             dearmor(armor("first") + "\n" + armor("second"))
 
     def test_non_base64_content_is_rejected(self):

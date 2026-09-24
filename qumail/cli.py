@@ -200,6 +200,66 @@ def cmd_receive(args: argparse.Namespace, config: Config) -> int:
     return 0
 
 
+def cmd_invite(args: argparse.Namespace, config: Config) -> int:
+    """Email someone your public key so they can write to you encrypted."""
+    from .invites import build_invitation_body
+    from .transport.smtp import send_invitation
+
+    identity = _unlock(config)
+    send_invitation(
+        config.smtp,
+        build_invitation_body(identity.public),
+        args.to,
+        from_address=config.smtp.from_address,
+    )
+    print("Contact request sent to %s" % args.to)
+    print("Your fingerprint: %s" % identity.public.pretty_fingerprint())
+    print(
+        "\nTell them that fingerprint through some other channel so they can\n"
+        "check it before accepting. Once they accept and reply, their key\n"
+        "arrives with the reply and you can write to them encrypted."
+    )
+    return 0
+
+
+def cmd_pending(args: argparse.Namespace, config: Config) -> int:
+    """List, accept or dismiss contact requests."""
+    from .invites import InviteStore
+
+    store = InviteStore(config.state_dir / "pending")
+
+    if args.accept:
+        pending = store.get(args.accept.replace(" ", "").lower())
+        if pending is None:
+            raise QuMailError("no pending contact request with that fingerprint")
+        ContactStore(config.contacts_path).add(pending.identity)
+        store.remove(pending.fingerprint)
+        _print_identity(pending.identity, heading="Accepted:")
+        return 0
+
+    if args.dismiss:
+        if not store.remove(args.dismiss.replace(" ", "").lower()):
+            raise QuMailError("no pending contact request with that fingerprint")
+        print("Dismissed.")
+        return 0
+
+    invites = store.all()
+    if not invites:
+        print("No pending contact requests.")
+        return 0
+
+    print("%d pending contact request(s):" % len(invites))
+    for invite in invites:
+        print("  %-40s %s" % (
+            invite.identity.address, invite.identity.pretty_fingerprint()
+        ))
+    print(
+        "\nCheck a fingerprint with its owner, then:\n"
+        "  qumail pending --accept <fingerprint>"
+    )
+    return 0
+
+
 def cmd_web(args: argparse.Namespace, config: Config) -> int:
     from .config import load_web
     from .web.server import WebApp, serve
@@ -244,8 +304,12 @@ def cmd_set_web_password(args: argparse.Namespace, config: Config) -> int:
         if password != getpass("Confirm password: "):
             raise ConfigError("passwords did not match")
 
+    # Hash before printing anything: a rejected password must not be preceded
+    # by a header promising output that never arrives.
+    encoded = hash_password(password)
+
     print("\nAdd these to your .env (or to Render's environment settings):\n")
-    print("QUMAIL_WEB_PASSWORD_HASH=%s" % hash_password(password))
+    print("QUMAIL_WEB_PASSWORD_HASH=%s" % encoded)
     print("QUMAIL_WEB_SESSION_SECRET=%s" % os.urandom(32).hex())
     print(
         "\nThe session secret keeps you logged in across restarts. Both values "
@@ -375,6 +439,17 @@ def build_parser() -> argparse.ArgumentParser:
              "to yourself: Gmail marks your own mail read on delivery)",
     )
     p.set_defaults(handler=cmd_receive, needs=("imap",))
+
+    p = sub.add_parser(
+        "invite", help="email someone your public key so they can write to you"
+    )
+    p.add_argument("--to", required=True, help="their email address")
+    p.set_defaults(handler=cmd_invite, needs=("smtp",))
+
+    p = sub.add_parser("pending", help="contact requests waiting for a decision")
+    p.add_argument("--accept", metavar="FINGERPRINT", help="trust this key")
+    p.add_argument("--dismiss", metavar="FINGERPRINT", help="discard this request")
+    p.set_defaults(handler=cmd_pending, needs=())
 
     p = sub.add_parser("web", help="run the browser inbox")
     p.add_argument("--host", help="bind address (default 127.0.0.1)")

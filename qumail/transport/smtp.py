@@ -10,6 +10,7 @@ from ..armor import armor
 from ..config import SmtpConfig
 from ..crypto.envelope import Envelope
 from ..errors import TransportError
+from ..invites import INVITATION_SUBJECT
 from ..logging_setup import get_logger
 from .tls import describe, secure_context
 
@@ -57,13 +58,9 @@ def build_message(envelope: Envelope, *, from_address: str, to_address: str) -> 
     return message
 
 
-def send(config: SmtpConfig, envelope: Envelope, to_address: str) -> None:
-    """Deliver `envelope`. Raises `TransportError` on any failure."""
-    message = build_message(
-        envelope, from_address=config.from_address, to_address=to_address
-    )
+def _deliver(config: SmtpConfig, message: EmailMessage) -> None:
+    """Open a verified TLS session and hand over one message."""
     context = secure_context()
-
     try:
         if config.security == "ssl":
             client = smtplib.SMTP_SSL(
@@ -104,6 +101,32 @@ def send(config: SmtpConfig, envelope: Envelope, to_address: str) -> None:
             "could not reach SMTP server %s:%d" % (config.host, config.port)
         ) from exc
 
+
+def send_invitation(config: SmtpConfig, body: str, to_address: str, *,
+                    from_address: str) -> None:
+    """Send a plaintext contact request carrying a public key.
+
+    Deliberately not encrypted: the whole point is that there is not yet a key
+    to encrypt to, and a public key is not a secret.
+    """
+    message = EmailMessage()
+    message["From"] = _validate_address(from_address)
+    message["To"] = _validate_address(to_address)
+    message["Subject"] = INVITATION_SUBJECT
+    message["Date"] = formatdate(localtime=True)
+    message["Message-ID"] = make_msgid(domain="qumail.local")
+    message.set_content(body)
+
+    _deliver(config, message)
+    log.info("sent contact request to %s", to_address)
+
+
+def send(config: SmtpConfig, envelope: Envelope, to_address: str) -> None:
+    """Deliver `envelope`. Raises `TransportError` on any failure."""
+    message = build_message(
+        envelope, from_address=config.from_address, to_address=to_address
+    )
+    _deliver(config, message)
     log.info(
         "sent message %s to %s", envelope.header.message_id, to_address
     )

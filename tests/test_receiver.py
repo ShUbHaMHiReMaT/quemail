@@ -148,7 +148,7 @@ class TestRejections:
             receiver.process_body(armor(json.dumps(data)))
 
     def test_non_qumail_mail_is_refused(self, receiver):
-        with pytest.raises(EnvelopeError, match="no QuMail armoured block"):
+        with pytest.raises(EnvelopeError, match="no QuMail message block"):
             receiver.process_body("Hi Bob, lunch at 1?")
 
     def test_nothing_is_written_when_a_message_is_rejected(

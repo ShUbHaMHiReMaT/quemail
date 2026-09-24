@@ -26,7 +26,8 @@ from .contacts import ContactStore
 from .crypto.envelope import Envelope, open_envelope
 from .crypto.keys import PrivateIdentity, PublicIdentity
 from .delivery import DeliveredMessage, deliver
-from .errors import QuMailError, TransportError, TrustError
+from .errors import EnvelopeError, QuMailError, TransportError, TrustError
+from .invites import InviteStore, looks_like_invitation, parse_invitation
 from .logging_setup import get_logger
 from .replay import ReplayGuard
 from .transport.imap import FetchedMessage, ImapReceiver
@@ -43,6 +44,7 @@ class PollResult:
     examined: int = 0
     delivered: int = 0
     rejected: int = 0
+    invitations: int = 0
 
 
 class Receiver:
@@ -69,6 +71,7 @@ class Receiver:
             max_age=config.policy.max_message_age,
             max_skew=config.policy.max_clock_skew,
         )
+        self.invites = InviteStore(config.state_dir / "pending")
         self._stopping = False
         # UIDs already reported as untrusted, so the log says it once.
         self._deferred: set = set()
@@ -141,6 +144,8 @@ class Receiver:
 
     def _process_fetched(self, message: FetchedMessage, result: PollResult) -> bool:
         """Handle one fetched mail. Returns True if it should be flagged read."""
+        if looks_like_invitation(message.body_text):
+            return self._process_invitation(message, result)
         if not contains_block(message.body_text):
             return False  # not ours; leave it unread for the user's mail client
 
@@ -169,6 +174,24 @@ class Receiver:
             # Flagged read: it will never become valid, and leaving it unread
             # means re-downloading and re-rejecting it forever.
             return True
+
+    def _process_invitation(self, message: FetchedMessage, result: PollResult) -> bool:
+        """File a contact request. Never imports: a person decides that."""
+        result.examined += 1
+        try:
+            identity = parse_invitation(message.body_text)
+        except EnvelopeError as exc:
+            result.rejected += 1
+            log.warning("malformed contact request from %s: %s",
+                        message.from_header or "unknown", exc)
+            return True
+
+        if self.contacts.get(identity.fingerprint) is not None:
+            return True  # already trusted; nothing to decide
+
+        self.invites.add(identity, message.from_header)
+        result.invitations += 1
+        return True
 
     # ---------- polling ----------
 

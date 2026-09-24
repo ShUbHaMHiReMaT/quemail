@@ -22,11 +22,12 @@ from urllib.parse import parse_qs, urlparse
 from ..config import Config
 from ..contacts import ContactStore
 from ..crypto.envelope import seal
-from ..crypto.keys import PrivateIdentity
-from ..errors import QuMailError
+from ..crypto.keys import PrivateIdentity, PublicIdentity
+from ..errors import EnvelopeError, QuMailError
+from ..invites import InviteStore, build_invitation_body
 from ..logging_setup import get_logger
 from ..receiver import Receiver
-from ..transport.smtp import send as smtp_send
+from ..transport.smtp import send as smtp_send, send_invitation
 from .auth import SESSION_COOKIE, SessionManager, verify_password
 from .pages import SCRIPT, STYLESHEET, inbox_page, login_page
 from .store import MessageStore
@@ -72,6 +73,7 @@ class WebApp:
         self.sessions = SessionManager(session_secret, secure_cookies=secure_cookies)
         self.contacts = ContactStore(config.contacts_path)
         self.store = MessageStore(config.output_dir, config.state_dir / "sent")
+        self.invites = InviteStore(config.state_dir / "pending")
         self.receiver = Receiver(
             config, identity, self.contacts, include_read=include_read
         )
@@ -133,6 +135,57 @@ class WebApp:
                 timestamp=envelope.header.timestamp,
             )
         return "Sent to %s" % recipient.address
+
+    def invite(self, to: str) -> str:
+        """Email this identity's public key so a stranger can reply encrypted."""
+        to = to.strip()
+        if not to:
+            raise QuMailError("an email address is required")
+
+        with self._send_lock:
+            send_invitation(
+                self.config.smtp,
+                build_invitation_body(self.identity.public),
+                to,
+                from_address=self.config.smtp.from_address,
+            )
+        return (
+            "Contact request sent to %s. Once they accept and reply, their key "
+            "arrives automatically." % to
+        )
+
+    def add_contact(self, bundle_text: str) -> str:
+        """Import a pasted public identity."""
+        if not bundle_text.strip():
+            raise QuMailError("paste the contents of their identity file")
+        try:
+            identity = PublicIdentity.from_json(bundle_text)
+        except EnvelopeError as exc:
+            raise QuMailError("that is not a valid QuMail identity: %s" % exc) from exc
+
+        added = self.contacts.add(identity)
+        self.invites.remove(identity.fingerprint)
+        return "%s %s (%s)" % (
+            "Added" if added else "Already trusted:",
+            identity.address,
+            identity.pretty_fingerprint(),
+        )
+
+    def accept_invite(self, fingerprint: str) -> str:
+        pending = self.invites.get(fingerprint.strip())
+        if pending is None:
+            raise QuMailError("no pending contact request with that fingerprint")
+
+        self.contacts.add(pending.identity)
+        self.invites.remove(pending.fingerprint)
+        return "Accepted %s (%s)" % (
+            pending.identity.address, pending.identity.pretty_fingerprint()
+        )
+
+    def dismiss_invite(self, fingerprint: str) -> str:
+        if not self.invites.remove(fingerprint.strip()):
+            raise QuMailError("no pending contact request with that fingerprint")
+        return "Contact request dismissed."
 
 
 def _make_handler(app: WebApp) -> type:
@@ -269,6 +322,18 @@ def _make_handler(app: WebApp) -> type:
             if path == "/send":
                 self._handle_send(form)
                 return
+            if path == "/contacts/invite":
+                self._act(lambda: app.invite(form.get("to", "")))
+                return
+            if path == "/contacts/add":
+                self._act(lambda: app.add_contact(form.get("bundle", "")))
+                return
+            if path == "/contacts/accept":
+                self._act(lambda: app.accept_invite(form.get("fingerprint", "")))
+                return
+            if path == "/contacts/dismiss":
+                self._act(lambda: app.dismiss_invite(form.get("fingerprint", "")))
+                return
 
             self._respond(HTTPStatus.NOT_FOUND, b"Not found", "text/plain")
 
@@ -299,14 +364,19 @@ def _make_handler(app: WebApp) -> type:
                 login_page(error="Incorrect password.").encode("utf-8"),
             )
 
-        def _handle_send(self, form: Dict[str, str]) -> None:
+        def _act(self, action) -> None:
+            """Run an action and report the outcome on the inbox page."""
             try:
-                note = app.send_message(
-                    form.get("to", ""), form.get("subject", ""), form.get("body", "")
-                )
-                self._redirect("/?sent=%s" % _quote(note))
+                self._redirect("/?sent=%s" % _quote(action()))
             except QuMailError as exc:
                 self._redirect("/?error=%s" % _quote(str(exc)))
+
+        def _handle_send(self, form: Dict[str, str]) -> None:
+            self._act(
+                lambda: app.send_message(
+                    form.get("to", ""), form.get("subject", ""), form.get("body", "")
+                )
+            )
 
         def _render_inbox(self, token: str) -> None:
             query = parse_qs(urlparse(self.path).query)
@@ -322,6 +392,8 @@ def _make_handler(app: WebApp) -> type:
                 selected=selected,
                 csrf=app.sessions.csrf_token(token),
                 count=app.store.count(),
+                contacts=list(app.contacts),
+                invites=app.invites.all(),
                 message=(query.get("sent") or [""])[0][:200],
                 error=(query.get("error") or [""])[0][:200],
                 last_poll=app.last_poll,

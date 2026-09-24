@@ -101,6 +101,19 @@ The resulting properties:
 imported in advance, which restores verify-before-first-message at the cost of
 the manual exchange.
 
+### Contact requests
+
+An invitation is a plaintext email carrying a public key. Nothing in it is
+secret -- a public key is meant to be seen -- but it is also unauthenticated,
+so it is filed as *pending* and never imported on its own. Anyone can email
+anyone a key claiming any address; the fingerprint shown beside it is what the
+recipient checks, through some channel other than the mailbox in question.
+
+The pending list is bounded at 100 entries and is stored under filenames
+derived from validated 32-character hex fingerprints, so a request cannot
+steer a filesystem path or exhaust the disk. A request whose fingerprint is
+already a trusted contact is discarded rather than queued.
+
 ## Hosted deployments
 
 Running the web inbox on a server, such as Render, moves the decryption

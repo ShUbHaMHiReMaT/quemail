@@ -82,6 +82,21 @@ qumail receive           # run continuously
 Decrypted messages land in `QUMAIL_OUTPUT_DIR` (default `./inbox/`) as
 `<message-id>.txt` with a `.json` sidecar naming the verified sender.
 
+### Reaching someone for the first time
+
+You cannot encrypt to a key you do not have, so the first exchange has to start
+with a public key travelling in the clear -- which is safe, because a public
+key is meant to be seen.
+
+1. **Add a contact** in the web inbox (or `qumail invite --to them@example.com`)
+   sends them a plaintext contact request carrying your public key and its
+   fingerprint.
+2. They accept it in their own QuMail, having checked the fingerprint.
+3. Their reply is encrypted and carries *their* key, which your side adopts
+   automatically.
+
+From then on both directions are sealed and nothing more is exchanged by hand.
+
 ### Verifying a contact
 
 Automatic key exchange is convenient, not infallible. To be certain who you
@@ -141,6 +156,8 @@ Leave the flag off for a long-running daemon receiving mail from other people.
 | `qumail remove-contact FP` | stop trusting a key |
 | `qumail send --to ADDR` | encrypt, sign and send |
 | `qumail receive [--once] [--html] [--include-read]` | poll, verify, decrypt |
+| `qumail invite --to ADDR` | email someone your public key |
+| `qumail pending [--accept FP] [--dismiss FP]` | contact requests awaiting a decision |
 | `qumail web` | run the browser inbox |
 | `qumail set-web-password` | generate the web inbox login credentials |
 | `qumail doctor` | check config, keystore and contacts |
@@ -155,6 +172,13 @@ new mail appears without you running anything.
 qumail set-web-password        # prints two values for your .env
 qumail web                     # http://127.0.0.1:8000
 ```
+
+Contacts are managed from the same page. **Add a contact** emails someone your
+public key; when they accept and reply, their key arrives with the reply and
+you can write to them encrypted. Keys that arrive from other people appear as
+**Contact requests** with their fingerprint and an Accept button -- never
+imported silently, because an identity block is only a claim until a person
+checks it. You can also paste a key directly, or copy your own out to share.
 
 It will not start without a password, because the pages it serves are
 decrypted mail. Sessions are signed cookies (HttpOnly, SameSite=Strict,
